@@ -1,0 +1,799 @@
+//+------------------------------------------------------------------+
+//|                                               EntryManager.mqh |
+//|                          SonicR PropFirm EA - Entry Management |
+//+------------------------------------------------------------------+
+#property copyright "SonicR PropFirm EA"
+#property link      "https://sonicr.com"
+
+#ifndef ENTRY_MANAGER_MQH
+#define ENTRY_MANAGER_MQH
+
+#include "SonicCore.mqh"
+#include "RiskManager.mqh"
+#include <Trade\Trade.mqh>
+
+// KHÔNG định nghĩa ENUM_SR_TYPE ở đây vì đã định nghĩa trong SonicCore.mqh
+
+// Entry manager class for handling trade entries
+class CEntryManager
+{
+private:
+    // Dependencies
+    CSonicCore* m_sonicCore;
+    CRiskManager* m_riskManager;
+    CTrade* m_trade;
+    
+    // Entry settings
+    double m_minRR;                 // Minimum risk-reward ratio
+    double m_minSignalQuality;      // Minimum signal quality (0-100)
+    int m_retryAttempts;            // Number of retry attempts for entry
+    int m_retryDelayMs;             // Delay between retries in ms
+    double m_slippage;              // Allowed slippage in points
+    
+    // Current signal state
+    int m_currentSignal;            // 1=buy, -1=sell, 0=none
+    double m_signalQuality;         // Signal quality (0-100)
+    double m_entryPrice;            // Entry price
+    double m_stopLoss;              // Stop loss price
+    double m_takeProfit;            // Take profit price
+    datetime m_signalTime;          // Time when signal was detected
+    
+    // History of entries
+    struct EntryAttempt {
+        datetime time;
+        int direction;
+        double price;
+        double sl;
+        double tp;
+        bool successful;
+        string reason;
+    };
+    
+    EntryAttempt m_recentEntries[10];
+    int m_entryCount;
+    
+    // Helper methods
+    double CalculateSignalQuality(int signal);
+    double CalculateATR(int period = 14);
+    double FindOptimalStopLoss(int direction);
+    double FindPotentialTakeProfit(int direction, double entry, double stop);
+    double GetSpread() const;
+    bool IsSpreadAcceptable() const;
+    bool ValidateSignal(int signal);
+    
+public:
+    // Constructor
+    CEntryManager(CSonicCore* sonicCore, CRiskManager* riskManager, CTrade* trade = NULL);
+    
+    // Main methods
+    void Update();
+    int CheckForSignal();
+    bool PrepareEntry(int signal);
+    bool ExecuteTrade();
+    
+    // Setters
+    void SetMinRR(double value) { m_minRR = value; }
+    void SetMinSignalQuality(double value) { m_minSignalQuality = value; }
+    void SetRetrySettings(int attempts, int delayMs) { 
+        m_retryAttempts = attempts; 
+        m_retryDelayMs = delayMs; 
+    }
+    
+    // Getters
+    int GetCurrentSignal() const { return m_currentSignal; }
+    double GetSignalQuality() const { return m_signalQuality; }
+    double GetEntryPrice() const { return m_entryPrice; }
+    double GetStopLoss() const { return m_stopLoss; }
+    double GetTakeProfit() const { return m_takeProfit; }
+    double GetRiskRewardRatio() const;
+    
+    // Utility
+    string GetStatusText() const;
+};
+
+//+------------------------------------------------------------------+
+//| Constructor                                                      |
+//+------------------------------------------------------------------+
+CEntryManager::CEntryManager(CSonicCore* sonicCore, CRiskManager* riskManager, CTrade* trade)
+{
+    // Set dependencies
+    m_sonicCore = sonicCore;
+    m_riskManager = riskManager;
+    m_trade = trade;
+    
+    // Initialize settings
+    m_minRR = 1.5;
+    m_minSignalQuality = 70.0;
+    m_retryAttempts = 3;
+    m_retryDelayMs = 200;
+    m_slippage = 10;
+    
+    // Initialize signal state
+    m_currentSignal = 0;
+    m_signalQuality = 0;
+    m_entryPrice = 0;
+    m_stopLoss = 0;
+    m_takeProfit = 0;
+    m_signalTime = 0;
+    
+    // Initialize entry history
+    m_entryCount = 0;
+}
+
+//+------------------------------------------------------------------+
+//| Update entry manager                                             |
+//+------------------------------------------------------------------+
+void CEntryManager::Update()
+{
+    // Reset signal if it's too old (5 minutes)
+    if(m_currentSignal != 0 && (TimeCurrent() - m_signalTime) > 300) {
+        m_currentSignal = 0;
+        m_signalQuality = 0;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Check for new signal                                             |
+//+------------------------------------------------------------------+
+int CEntryManager::CheckForSignal()
+{
+    // Check for Classic setup
+    int signal = m_sonicCore.DetectClassicSetup();
+    
+    // If no Classic setup, check for Scout setup
+    if(signal == 0) {
+        signal = m_sonicCore.DetectScoutSetup();
+    }
+    
+    // Validate signal
+    if(signal != 0) {
+        if(ValidateSignal(signal)) {
+            // Calculate signal quality
+            m_signalQuality = CalculateSignalQuality(signal);
+            
+            // Check if signal quality meets minimum
+            if(m_signalQuality >= m_minSignalQuality) {
+                // Store signal
+                m_currentSignal = signal;
+                m_signalTime = TimeCurrent();
+                return signal;
+            }
+        }
+    }
+    
+    return 0; // No valid signal
+}
+
+//+------------------------------------------------------------------+
+//| Validate signal                                                  |
+//+------------------------------------------------------------------+
+bool CEntryManager::ValidateSignal(int signal)
+{
+    // Check if PVSRA confirms signal direction
+    if(!m_sonicCore.IsPVSRAConfirming(signal)) {
+        return false;
+    }
+    
+    // For long signal
+    if(signal > 0) {
+        // Check if Dragon is above Trend
+        if(!m_sonicCore.IsDragonAboveTrend()) {
+            return false;
+        }
+        
+        // Check if Dragon slope is positive
+        if(m_sonicCore.GetDragonSlope() <= 0) {
+            return false;
+        }
+    }
+    // For short signal
+    else {
+        // Check if Dragon is below Trend
+        if(m_sonicCore.IsDragonAboveTrend()) {
+            return false;
+        }
+        
+        // Check if Dragon slope is negative
+        if(m_sonicCore.GetDragonSlope() >= 0) {
+            return false;
+        }
+    }
+    
+    // Check for valid pullback
+    if(!m_sonicCore.IsPullbackValid(signal)) {
+        return false;
+    }
+    
+    // All validation passed
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate signal quality                                         |
+//+------------------------------------------------------------------+
+double CEntryManager::CalculateSignalQuality(int signal)
+{
+    double quality = 70.0; // Base quality
+    
+    // Adjust based on Dragon-Trend alignment
+    double dragonSlope = m_sonicCore.GetDragonSlope();
+    
+    if(signal > 0) { // Long signal
+        // Stronger quality for steeper upward Dragon slope
+        quality += dragonSlope * 100.0;
+    } else { // Short signal
+        // Stronger quality for steeper downward Dragon slope
+        quality -= dragonSlope * 100.0;
+    }
+    
+    // Adjust based on PVSRA confidence
+    quality += (m_sonicCore.GetPVSRAConfidence() - 50.0) * 0.4;
+    
+    // Adjust based on pullback depth
+    double pullbackDepth = m_sonicCore.GetPullbackDepth();
+    
+    // Optimal pullback depth is around 50%
+    double depthQuality = 100.0 - MathAbs(pullbackDepth - 50.0) * 2.0;
+    quality += (depthQuality - 50.0) * 0.2;
+    
+    // Adjust based on wave amplitude
+    double waveAmplitude = m_sonicCore.GetWaveAmplitude();
+    
+    // Bigger waves are better (up to a point)
+    if(waveAmplitude > 30.0) {
+        quality += 5.0;
+    } else if(waveAmplitude < 15.0) {
+        quality -= 10.0;
+    }
+    
+    // Get nearest SR level
+    double srLevel = 0;
+    double srStrength = 0;
+    ENUM_SR_TYPE srType;
+    srLevel = m_sonicCore.FindNearestSRLevel(SymbolInfoDouble(_Symbol, signal > 0 ? SYMBOL_ASK : SYMBOL_BID), srStrength, srType);
+
+    // Adjust quality based on SR type
+    double srQuality = 0;
+    switch(srType) {
+        case SR_WHOLE:
+            srQuality = 15.0;  // Whole numbers are strongest
+            break;
+        case SR_HALF:
+            srQuality = 10.0;  // Half numbers are good
+            break;
+        case SR_QUARTER:
+            srQuality = 5.0;   // Quarter numbers are decent
+            break;
+        case SR_SWING_HIGH:
+        case SR_SWING_LOW:
+            // For swing points, award more points if recent
+            // Implementation would depend on your data structure
+            srQuality = 12.0;  
+            break;
+    }
+
+    // Add SR quality to overall signal quality
+    quality += srQuality;
+    
+    // Cap quality between 0 and 100
+    return MathMax(0.0, MathMin(100.0, quality));
+}
+
+//+------------------------------------------------------------------+
+//| Prepare entry for signal                                         |
+//+------------------------------------------------------------------+
+bool CEntryManager::PrepareEntry(int signal)
+{
+    // Check if signal is valid
+    if(signal == 0) {
+        return false;
+    }
+    
+    // Check if spread is acceptable
+    if(!IsSpreadAcceptable()) {
+        return false;
+    }
+    
+    // Calculate entry price
+    m_entryPrice = signal > 0 ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+    
+    // Find optimal stop loss
+    m_stopLoss = FindOptimalStopLoss(signal);
+    
+    // Check if stop loss is valid
+    if(m_stopLoss <= 0) {
+        return false;
+    }
+    
+    // Calculate take profit based on R:R
+    m_takeProfit = FindPotentialTakeProfit(signal, m_entryPrice, m_stopLoss);
+    
+    // Check if take profit is valid
+    if(m_takeProfit <= 0) {
+        return false;
+    }
+    
+    // Calculate risk-reward ratio
+    double riskPips = MathAbs(m_entryPrice - m_stopLoss) / _Point;
+    double rewardPips = MathAbs(m_entryPrice - m_takeProfit) / _Point;
+    double rr = rewardPips / riskPips;
+    
+    // Check if R:R meets minimum requirement
+    if(rr < m_minRR) {
+        return false;
+    }
+    
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Execute trade entry                                              |
+//+------------------------------------------------------------------+
+bool CEntryManager::ExecuteTrade()
+{
+    // Ensure trade object is valid
+    if(m_trade == NULL) {
+        Print("Error: Trade object is not initialized");
+        return false;
+    }
+    
+    // Check if entry is prepared
+    if(m_currentSignal == 0 || m_entryPrice <= 0 || m_stopLoss <= 0 || m_takeProfit <= 0) {
+        return false;
+    }
+    
+    // Calculate lot size based on risk
+    double riskPercent = m_riskManager.GetRiskPercent() * (m_signalQuality / 100.0);
+    
+    // Get SR type information
+    double srLevel = 0;
+    double srStrength = 0;
+    ENUM_SR_TYPE srType;
+    srLevel = m_sonicCore.FindNearestSRLevel(m_stopLoss, srStrength, srType);
+
+    // Adjust position size based on SR type near stop loss
+    double sizeMultiplier = 1.0;
+    switch(srType) {
+        case SR_WHOLE:
+            sizeMultiplier = 1.0;   // Standard sizing for whole number SL
+            break;
+        case SR_HALF:
+            sizeMultiplier = 0.9;   // Slightly reduced for half
+            break;
+        case SR_QUARTER:
+            sizeMultiplier = 0.8;   // More reduced for quarter
+            break;
+        case SR_SWING_HIGH:
+        case SR_SWING_LOW:
+            // For swing points, might increase size as they're more precise
+            sizeMultiplier = 1.1;  
+            break;
+    }
+
+    // Apply the multiplier to your position sizing
+    double lotSize = m_riskManager.CalculateLotSize(riskPercent, m_entryPrice, m_stopLoss) * sizeMultiplier;
+    
+    // Validate lot size
+    if(lotSize <= 0) {
+        lotSize = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+    }
+    
+    // Set trade parameters
+    m_trade.SetDeviationInPoints((ulong)m_slippage);
+    
+    bool result = false;
+    
+    // Attempt to execute the trade with retries
+    for(int attempt = 0; attempt < m_retryAttempts; attempt++) {
+        // Execute market order
+        if(m_currentSignal > 0) {
+            result = m_trade.Buy(lotSize, _Symbol, 0, m_stopLoss, m_takeProfit, "SonicR Classic Buy");
+        } else {
+            result = m_trade.Sell(lotSize, _Symbol, 0, m_stopLoss, m_takeProfit, "SonicR Classic Sell");
+        }
+        
+        // Check if successful
+        if(result) {
+            break;
+        }
+        
+        // Delay before retry
+        if(attempt < m_retryAttempts - 1) {
+            Sleep(m_retryDelayMs);
+        }
+    }
+    
+    // Add to entry history
+    if(m_entryCount >= ArraySize(m_recentEntries)) {
+        // Shift array to make room
+        for(int i = 0; i < ArraySize(m_recentEntries) - 1; i++) {
+            m_recentEntries[i] = m_recentEntries[i + 1];
+        }
+        m_entryCount = ArraySize(m_recentEntries) - 1;
+    }
+    
+    m_recentEntries[m_entryCount].time = TimeCurrent();
+    m_recentEntries[m_entryCount].direction = m_currentSignal;
+    m_recentEntries[m_entryCount].price = m_entryPrice;
+    m_recentEntries[m_entryCount].sl = m_stopLoss;
+    m_recentEntries[m_entryCount].tp = m_takeProfit;
+    m_recentEntries[m_entryCount].successful = result;
+    m_recentEntries[m_entryCount].reason = result ? "Success" : "Failed: " + IntegerToString(GetLastError());
+    
+    m_entryCount++;
+    
+    // Reset signal on successful execution
+    if(result) {
+        m_currentSignal = 0;
+    }
+    
+    return result;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate ATR                                                    |
+//+------------------------------------------------------------------+
+double CEntryManager::CalculateATR(int period)
+{
+    double atr[1];
+    int handle = iATR(_Symbol, PERIOD_CURRENT, period);
+    
+    if(handle == INVALID_HANDLE) {
+        return 0;
+    }
+    
+    if(CopyBuffer(handle, 0, 0, 1, atr) <= 0) {
+        return 0;
+    }
+    
+    IndicatorRelease(handle);
+    
+    return atr[0];
+}
+
+//+------------------------------------------------------------------+
+//| Find optimal stop loss level                                     |
+//+------------------------------------------------------------------+
+double CEntryManager::FindOptimalStopLoss(int direction)
+{
+    double stopLoss = 0;
+    
+    // Get ATR for dynamic sizing
+    double atr = CalculateATR(14);
+    
+    // For long trades, SL should be below a support level
+    if(direction > 0) {
+        // Option 1: Use Dragon Low as SL
+        double dragonLow = m_sonicCore.GetDragonLow();
+        
+        // Option 2: Use recent swing low
+        double swingLow = 0;
+        // We would extract this from wave pattern
+        
+        // Option 3: Use fixed ATR distance
+        double atrStop = SymbolInfoDouble(_Symbol, SYMBOL_ASK) - atr * 0.8;
+        
+        // Get nearest SR level - Sửa đoạn code này để truyền đúng kiểu tham số
+        double srLevel = 0;
+        double srStrength = 0;
+        ENUM_SR_TYPE srType;  // Sử dụng đúng kiểu ENUM_SR_TYPE
+        
+        // Gọi hàm FindNearestSRLevel với tham chiếu đến srType
+        srLevel = m_sonicCore.FindNearestSRLevel(SymbolInfoDouble(_Symbol, SYMBOL_ASK), srStrength, srType);
+        
+        // Điều chỉnh SL dựa trên loại S/R level
+        double buffer = 10 * _Point; // Buffer mặc định
+
+        // Điều chỉnh buffer dựa trên loại S/R
+        switch(srType) {
+            case SR_WHOLE:
+                buffer = 15 * _Point; // Buffer lớn hơn cho whole number
+                break;
+            case SR_HALF:
+                buffer = 12 * _Point; // Buffer trung bình cho half number
+                break;
+            case SR_QUARTER:
+                buffer = 8 * _Point;  // Buffer nhỏ hơn cho quarter number
+                break;
+            case SR_SWING_HIGH:
+            case SR_SWING_LOW:
+                buffer = 5 * _Point;  // Buffer nhỏ nhất cho swing points
+                break;
+        }
+        
+        // Choose the best option based on various factors
+        // Prioritize swing low if it's close to a strong SR level
+        if(swingLow > 0 && MathAbs(swingLow - srLevel) < atr * 0.3) {
+            stopLoss = swingLow - buffer; // Sử dụng buffer tùy chỉnh
+        }
+        // Otherwise use Dragon Low if it's not too far
+        else if(dragonLow > 0 && MathAbs(SymbolInfoDouble(_Symbol, SYMBOL_ASK) - dragonLow) < atr * 2) {
+            stopLoss = dragonLow - buffer; // Sử dụng buffer tùy chỉnh
+        }
+        // Fallback to ATR-based stop
+        else {
+            stopLoss = atrStop;
+        }
+    }
+    // For short trades, SL should be above a resistance level
+    else {
+        // Option 1: Use Dragon High as SL
+        double dragonHigh = m_sonicCore.GetDragonHigh();
+        
+        // Option 2: Use recent swing high
+        double swingHigh = 0;
+        // We would extract this from wave pattern
+        
+        // Option 3: Use fixed ATR distance
+        double atrStop = SymbolInfoDouble(_Symbol, SYMBOL_BID) + atr * 0.8;
+        
+        // Get nearest SR level - Sửa đoạn code này để dùng srType chính xác
+        double srLevel = 0;
+        double srStrength = 0;
+        ENUM_SR_TYPE srType;  // Sử dụng đúng kiểu ENUM_SR_TYPE
+        
+        // Gọi hàm FindNearestSRLevel và truyền srType
+        srLevel = m_sonicCore.FindNearestSRLevel(SymbolInfoDouble(_Symbol, SYMBOL_BID), srStrength, srType);
+        
+        // Điều chỉnh SL dựa trên loại S/R level
+        double buffer = 10 * _Point; // Buffer mặc định
+
+        // Điều chỉnh buffer dựa trên loại S/R
+        switch(srType) {
+            case SR_WHOLE:
+                buffer = 15 * _Point; // Buffer lớn hơn cho whole number
+                break;
+            case SR_HALF:
+                buffer = 12 * _Point; // Buffer trung bình cho half number
+                break;
+            case SR_QUARTER:
+                buffer = 8 * _Point;  // Buffer nhỏ hơn cho quarter number
+                break;
+            case SR_SWING_HIGH:
+            case SR_SWING_LOW:
+                buffer = 5 * _Point;  // Buffer nhỏ nhất cho swing points
+                break;
+        }
+        
+        // Choose the best option based on various factors
+        // Prioritize swing high if it's close to a strong SR level
+        if(swingHigh > 0 && MathAbs(swingHigh - srLevel) < atr * 0.3) {
+            stopLoss = swingHigh + buffer; // Sử dụng buffer tùy chỉnh
+        }
+        // Otherwise use Dragon High if it's not too far
+        else if(dragonHigh > 0 && MathAbs(SymbolInfoDouble(_Symbol, SYMBOL_BID) - dragonHigh) < atr * 2) {
+            stopLoss = dragonHigh + buffer; // Sử dụng buffer tùy chỉnh
+        }
+        // Fallback to ATR-based stop
+        else {
+            stopLoss = atrStop;
+        }
+    }
+    
+    // Limit maximum stop loss size to 2x ATR
+    double maxStop = atr * 2;
+    double currentStop = MathAbs(direction > 0 ? 
+                              SymbolInfoDouble(_Symbol, SYMBOL_ASK) - stopLoss : 
+                              stopLoss - SymbolInfoDouble(_Symbol, SYMBOL_BID)) / _Point;
+    
+    if(currentStop > maxStop / _Point) {
+        stopLoss = direction > 0 ? 
+                 SymbolInfoDouble(_Symbol, SYMBOL_ASK) - maxStop : 
+                 SymbolInfoDouble(_Symbol, SYMBOL_BID) + maxStop;
+    }
+    
+    return stopLoss;
+}
+
+//+------------------------------------------------------------------+
+//| Find potential take profit level                                 |
+//+------------------------------------------------------------------+
+double CEntryManager::FindPotentialTakeProfit(int direction, double entry, double stop)
+{
+    // Calculate basic distance based on R:R
+    double stopDistance = MathAbs(entry - stop);
+    double tpDistance = stopDistance * m_minRR;
+    
+    // Get ATR for reference
+    double atr = CalculateATR(14);
+    
+    // For long trades, TP should be at a resistance level
+    if(direction > 0) {
+        // Basic TP based on R:R
+        double baseTP = entry + tpDistance;
+        
+        // Find nearest resistance level above entry
+        double srLevel = 0;
+        double srStrength = 0;
+        ENUM_SR_TYPE srType;
+        
+        // Tìm SR level gần nhất phía trên entry
+        srLevel = m_sonicCore.FindNearestSRLevel(entry + tpDistance, srStrength, srType);
+        
+        // Điều chỉnh TP dựa trên loại SR level
+        double tpAdjustment = 0;
+        switch(srType) {
+            case SR_WHOLE:
+                // Nhắm vào giá trị thấp hơn một chút so với whole number
+                tpAdjustment = -10 * _Point;
+                break;
+            case SR_HALF:
+                // Nhắm vào giá trị thấp hơn một chút so với half number
+                tpAdjustment = -7 * _Point;
+                break;
+            case SR_QUARTER:
+                // Nhắm vào giá trị thấp hơn một chút so với quarter number
+                tpAdjustment = -5 * _Point;
+                break;
+            case SR_SWING_HIGH:
+                // Nhắm vào mức swing high trước đó
+                tpAdjustment = -3 * _Point;
+                break;
+            case SR_SWING_LOW:
+                // Không điều chỉnh nhiều cho swing low (ít có ý nghĩa kháng cự cho lệnh buy)
+                tpAdjustment = 0;
+                break;
+        }
+        
+        // Find next key SR level above entry
+        double wholeNumber = m_sonicCore.FindNearestWholeNumber(entry);
+        if(wholeNumber <= entry) wholeNumber += 1.0;
+        
+        // Quyết định TP cuối cùng:
+        // 1. Nếu có SR level phù hợp gần baseTP, sử dụng nó với điều chỉnh
+        if(srLevel > 0 && MathAbs(srLevel - baseTP) < atr * 0.5) {
+            return srLevel + tpAdjustment; // Sử dụng SR level đã điều chỉnh
+        }
+        // 2. Nếu whole number ở xa hơn minRR, sử dụng nó
+        else if(wholeNumber - entry >= tpDistance) {
+            return wholeNumber - 10 * _Point; // Đặt TP ngay dưới whole number
+        }
+        // 3. Fallback: sử dụng baseTP
+        else {
+            return baseTP;
+        }
+    }
+    // For short trades, TP should be at a support level
+    else {
+        // Basic TP based on R:R
+        double baseTP = entry - tpDistance;
+        
+        // Find nearest support level below entry
+        double srLevel = 0;
+        double srStrength = 0;
+        ENUM_SR_TYPE srType;
+        
+        // Tìm SR level gần nhất phía dưới entry
+        srLevel = m_sonicCore.FindNearestSRLevel(entry - tpDistance, srStrength, srType);
+        
+        // Điều chỉnh TP dựa trên loại SR level
+        double tpAdjustment = 0;
+        switch(srType) {
+            case SR_WHOLE:
+                // Nhắm vào giá trị cao hơn một chút so với whole number
+                tpAdjustment = 10 * _Point;
+                break;
+            case SR_HALF:
+                // Nhắm vào giá trị cao hơn một chút so với half number
+                tpAdjustment = 7 * _Point;
+                break;
+            case SR_QUARTER:
+                // Nhắm vào giá trị cao hơn một chút so với quarter number
+                tpAdjustment = 5 * _Point;
+                break;
+            case SR_SWING_LOW:
+                // Nhắm vào mức swing low trước đó
+                tpAdjustment = 3 * _Point;
+                break;
+            case SR_SWING_HIGH:
+                // Không điều chỉnh nhiều cho swing high (ít có ý nghĩa hỗ trợ cho lệnh sell)
+                tpAdjustment = 0;
+                break;
+        }
+        
+        // Find next key SR level below entry
+        double wholeNumber = m_sonicCore.FindNearestWholeNumber(entry);
+        if(wholeNumber >= entry) wholeNumber -= 1.0;
+        
+        // Quyết định TP cuối cùng:
+        // 1. Nếu có SR level phù hợp gần baseTP, sử dụng nó với điều chỉnh
+        if(srLevel > 0 && MathAbs(srLevel - baseTP) < atr * 0.5) {
+            return srLevel + tpAdjustment; // Sử dụng SR level đã điều chỉnh
+        }
+        // 2. Nếu whole number ở xa hơn minRR, sử dụng nó
+        else if(entry - wholeNumber >= tpDistance) {
+            return wholeNumber + 10 * _Point; // Đặt TP ngay trên whole number
+        }
+        // 3. Fallback: sử dụng baseTP
+        else {
+            return baseTP;
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Get current spread in points                                     |
+//+------------------------------------------------------------------+
+double CEntryManager::GetSpread() const
+{
+    return (SymbolInfoDouble(_Symbol, SYMBOL_ASK) - SymbolInfoDouble(_Symbol, SYMBOL_BID)) / _Point;
+}
+
+//+------------------------------------------------------------------+
+//| Check if spread is acceptable for trading                        |
+//+------------------------------------------------------------------+
+bool CEntryManager::IsSpreadAcceptable() const
+{
+    double spread = GetSpread();
+    double maxSpread = 20.0; // Maximum acceptable spread in points
+    
+    // Adjust max spread based on symbol
+    string symbol = _Symbol;
+    
+    if(symbol == "GBPJPY" || symbol == "GBPUSD") {
+        maxSpread = 30.0;
+    }
+    else if(symbol == "EURUSD" || symbol == "USDJPY") {
+        maxSpread = 15.0;
+    }
+    
+    return spread <= maxSpread;
+}
+
+//+------------------------------------------------------------------+
+//| Get current risk-reward ratio                                    |
+//+------------------------------------------------------------------+
+double CEntryManager::GetRiskRewardRatio() const
+{
+    if(m_stopLoss <= 0 || m_takeProfit <= 0 || m_entryPrice <= 0) {
+        return 0;
+    }
+    
+    double riskPips = MathAbs(m_entryPrice - m_stopLoss) / _Point;
+    double rewardPips = MathAbs(m_entryPrice - m_takeProfit) / _Point;
+    
+    if(riskPips <= 0) {
+        return 0;
+    }
+    
+    return rewardPips / riskPips;
+}
+
+//+------------------------------------------------------------------+
+//| Get status text for diagnostics                                  |
+//+------------------------------------------------------------------+
+string CEntryManager::GetStatusText() const
+{
+    string status = "Entry Manager Status:\n";
+    
+    // Signal status
+    status += "Current Signal: " + (m_currentSignal > 0 ? "BUY" : (m_currentSignal < 0 ? "SELL" : "None")) + "\n";
+    
+    if(m_currentSignal != 0) {
+        status += "Signal Quality: " + DoubleToString(m_signalQuality, 1) + "%\n";
+        status += "Entry Price: " + DoubleToString(m_entryPrice, _Digits) + "\n";
+        status += "Stop Loss: " + DoubleToString(m_stopLoss, _Digits) + "\n";
+        status += "Take Profit: " + DoubleToString(m_takeProfit, _Digits) + "\n";
+        status += "Risk-Reward: " + DoubleToString(GetRiskRewardRatio(), 2) + "\n";
+    }
+    
+    // Recent entries
+    if(m_entryCount > 0) {
+        status += "Latest Entry:\n";
+        int idx = m_entryCount - 1;
+        status += "  Time: " + TimeToString(m_recentEntries[idx].time, TIME_MINUTES) + "\n";
+        status += "  Direction: " + (m_recentEntries[idx].direction > 0 ? "BUY" : "SELL") + "\n";
+        status += "  Result: " + (m_recentEntries[idx].successful ? "SUCCESS" : "FAILED") + "\n";
+        if(!m_recentEntries[idx].successful) {
+            status += "  Reason: " + m_recentEntries[idx].reason + "\n";
+        }
+    }
+    
+    // Current conditions
+    status += "Current Spread: " + DoubleToString(GetSpread(), 1) + " points\n";
+    status += "Spread Acceptable: " + (IsSpreadAcceptable() ? "Yes" : "NO") + "\n";
+    
+    return status;
+}
+
+#endif // ENTRY_MANAGER_MQH
