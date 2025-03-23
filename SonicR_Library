@@ -1,0 +1,554 @@
+//+------------------------------------------------------------------+
+//|                                            SonicR_Library.mq5 |
+//|                                          SonicR PropFirm System |
+//+------------------------------------------------------------------+
+#property copyright "SonicR PropFirm System"
+#property link      "https://sonicr.com"
+#property version   "1.00"
+#property library
+
+// Thư viện này chứa các thành phần cốt lõi cho hệ thống SonicR PropFirm
+
+//+------------------------------------------------------------------+
+//| Enums                                                            |
+//+------------------------------------------------------------------+
+
+// PVSRA State Enum
+enum ENUM_MM_INTENTION {
+    MM_INTENTION_BULLISH = 1,    // Market Makers Bullish
+    MM_INTENTION_BEARISH = -1,   // Market Makers Bearish
+    MM_INTENTION_NEUTRAL = 0     // Market Makers Neutral/Unclear
+};
+
+// Market Regime Enum
+enum ENUM_MARKET_REGIME {
+    MARKET_REGIME_TRENDING_UP,    // Trending Up
+    MARKET_REGIME_TRENDING_DOWN,  // Trending Down
+    MARKET_REGIME_RANGING,        // Ranging
+    MARKET_REGIME_ACCUMULATION,   // Accumulation
+    MARKET_REGIME_DISTRIBUTION    // Distribution
+};
+
+// Trade Signal Type
+enum ENUM_SIGNAL_TYPE {
+    SIGNAL_CLASSIC,   // Classic Setup
+    SIGNAL_SCOUT,     // Scout Setup
+    SIGNAL_NONE       // No Signal
+};
+
+// SR Level Type
+enum ENUM_SR_TYPE {
+    SR_WHOLE,         // Whole number (1.2000)
+    SR_HALF,          // Half number (1.2050)
+    SR_QUARTER,       // Quarter number (1.2025/1.2075)
+    SR_SWING_HIGH,    // Previous swing high
+    SR_SWING_LOW      // Previous swing low
+};
+
+// Trading Session
+enum ENUM_TRADING_SESSION {
+    SESSION_ASIAN,    // Asian Session
+    SESSION_LONDON,   // London Session
+    SESSION_NEWYORK,  // New York Session
+    SESSION_OVERLAP,  // London/New York Overlap
+    SESSION_NONE      // No Active Major Session
+};
+
+//+------------------------------------------------------------------+
+//| Structs                                                          |
+//+------------------------------------------------------------------+
+
+// Signal Info Structure
+struct SSignalInfo {
+    ENUM_SIGNAL_TYPE type;    // Signal type
+    int direction;            // 1=buy, -1=sell, 0=neutral
+    double entryPrice;        // Entry price
+    double stopLoss;          // Stop loss level
+    double takeProfit;        // Take profit level
+    double quality;           // Signal quality (0-100)
+    datetime time;            // Signal time
+    string reason;            // Signal reason
+    
+    // Constructor
+    SSignalInfo() {
+        type = SIGNAL_NONE;
+        direction = 0;
+        entryPrice = 0.0;
+        stopLoss = 0.0;
+        takeProfit = 0.0;
+        quality = 0.0;
+        time = 0;
+        reason = "";
+    }
+};
+
+// Dragon-Trend Analysis Structure
+struct SDragonTrendState {
+    bool dragonAboveTrend;     // Dragon is above Trend
+    double dragonMid;          // Current Dragon Mid value
+    double dragonHigh;         // Current Dragon High value
+    double dragonLow;          // Current Dragon Low value
+    double trend;              // Current Trend value
+    double dragonSlope;        // Dragon angle/slope (degrees)
+    double trendSlope;         // Trend angle/slope (degrees)
+    double dragonWidth;        // Width of Dragon channel (High-Low)
+    double pricePosition;      // Price position within Dragon (0-1)
+    
+    // Constructor
+    SDragonTrendState() {
+        dragonAboveTrend = false;
+        dragonMid = 0.0;
+        dragonHigh = 0.0;
+        dragonLow = 0.0;
+        trend = 0.0;
+        dragonSlope = 0.0;
+        trendSlope = 0.0;
+        dragonWidth = 0.0;
+        pricePosition = 0.0;
+    }
+};
+
+// PVSRA Analysis Structure
+struct SPVSRAState {
+    bool isClimaxVolume;      // Is climax volume detected
+    bool isRisingVolume;      // Is rising volume detected
+    bool volumeAtTop;         // High volume at tops
+    bool volumeAtBottom;      // High volume at bottoms
+    ENUM_MM_INTENTION mmIntention;  // Market Maker intention
+    double confidence;        // Confidence level (0-100)
+    double volumeRatio;       // Current volume / average volume
+    
+    // Constructor
+    SPVSRAState() {
+        isClimaxVolume = false;
+        isRisingVolume = false;
+        volumeAtTop = false;
+        volumeAtBottom = false;
+        mmIntention = MM_INTENTION_NEUTRAL;
+        confidence = 0.0;
+        volumeRatio = 0.0;
+    }
+};
+
+// Wave Pattern Structure
+struct SWavePattern {
+    double swingHighs[5];     // Recent swing highs
+    double swingLows[5];      // Recent swing lows
+    bool inUptrendWave;       // In uptrend wave pattern
+    bool inDowntrendWave;     // In downtrend wave pattern
+    bool inPullback;          // Currently in pullback
+    double pullbackDepth;     // Depth of current pullback (%)
+    double waveAmplitude;     // Amplitude of current wave (pips)
+    
+    // Constructor
+    SWavePattern() {
+        for(int i=0; i<5; i++) {
+            swingHighs[i] = 0.0;
+            swingLows[i] = 0.0;
+        }
+        inUptrendWave = false;
+        inDowntrendWave = false;
+        inPullback = false;
+        pullbackDepth = 0.0;
+        waveAmplitude = 0.0;
+    }
+};
+
+// Support/Resistance Level Structure
+struct SSRLevel {
+    double price;             // Level price
+    ENUM_SR_TYPE type;        // Level type
+    double strength;          // Level strength (0-100)
+    datetime lastTest;        // Last time level was tested
+    int testCount;            // Number of times level has been tested
+    
+    // Constructor
+    SSRLevel() {
+        price = 0.0;
+        type = SR_WHOLE;
+        strength = 0.0;
+        lastTest = 0;
+        testCount = 0;
+    }
+};
+
+// Trade Position Structure
+struct STradePosition {
+    ulong ticket;             // Position ticket
+    int type;                 // 0=buy, 1=sell
+    double lots;              // Lots size
+    double openPrice;         // Opening price
+    double sl;                // Current stop loss 
+    double tp;                // Current take profit
+    double profit;            // Current profit in account currency
+    datetime openTime;        // Opening time
+    bool partialClosed;       // Has position been partially closed
+    
+    // Constructor
+    STradePosition() {
+        ticket = 0;
+        type = -1;
+        lots = 0.0;
+        openPrice = 0.0;
+        sl = 0.0;
+        tp = 0.0;
+        profit = 0.0;
+        openTime = 0;
+        partialClosed = false;
+    }
+};
+
+// PropFirm Account Info
+struct SPropFirmInfo {
+    string accountName;       // Account name/number
+    double balance;           // Current balance
+    double equity;            // Current equity
+    double startingBalance;   // Starting balance
+    double maxAllowedDD;      // Maximum allowed drawdown
+    double maxDailyDD;        // Maximum allowed daily drawdown
+    double currentProfit;     // Current profit percentage
+    double profitTarget;      // Profit target percentage
+    int daysElapsed;          // Days elapsed in challenge
+    int totalDays;            // Total days in challenge
+    
+    // Constructor
+    SPropFirmInfo() {
+        accountName = "";
+        balance = 0.0;
+        equity = 0.0;
+        startingBalance = 0.0;
+        maxAllowedDD = 0.0;
+        maxDailyDD = 0.0;
+        currentProfit = 0.0;
+        profitTarget = 0.0;
+        daysElapsed = 0;
+        totalDays = 0;
+    }
+};
+
+//+------------------------------------------------------------------+
+//| Market Analysis Utilities                                        |
+//+------------------------------------------------------------------+
+
+// Calculate EMA value
+double CalculateEMA(const double &price[], int index, int period)
+{
+    if(index < period) {
+        return price[index]; // Not enough data
+    }
+    
+    double alpha = 2.0 / (period + 1.0);
+    
+    if(index == period) {
+        // Initial EMA value is SMA
+        double sum = 0;
+        for(int i = 0; i < period; i++) {
+            sum += price[index - i];
+        }
+        return sum / period;
+    }
+    
+    return alpha * price[index] + (1 - alpha) * CalculateEMA(price, index - 1, period);
+}
+
+// Check if bar is a swing high
+bool IsSwingHigh(const double &high[], int index, int leftBars, int rightBars)
+{
+    if(index < leftBars || index >= ArraySize(high) - rightBars) {
+        return false;
+    }
+    
+    for(int i = 1; i <= leftBars; i++) {
+        if(high[index] <= high[index - i]) return false;
+    }
+    
+    for(int i = 1; i <= rightBars; i++) {
+        if(high[index] <= high[index + i]) return false;
+    }
+    
+    return true;
+}
+
+// Check if bar is a swing low
+bool IsSwingLow(const double &low[], int index, int leftBars, int rightBars)
+{
+    if(index < leftBars || index >= ArraySize(low) - rightBars) {
+        return false;
+    }
+    
+    for(int i = 1; i <= leftBars; i++) {
+        if(low[index] >= low[index - i]) return false;
+    }
+    
+    for(int i = 1; i <= rightBars; i++) {
+        if(low[index] >= low[index + i]) return false;
+    }
+    
+    return true;
+}
+
+// Determine current market regime
+ENUM_MARKET_REGIME GetMarketRegime(const SDragonTrendState &dragonTrend, 
+                                 const SPVSRAState &pvsra,
+                                 const SWavePattern &wave)
+{
+    // Trending up if Dragon slope positive and above Trend
+    if(dragonTrend.dragonSlope > 0.5 && dragonTrend.dragonAboveTrend) {
+        return MARKET_REGIME_TRENDING_UP;
+    }
+    
+    // Trending down if Dragon slope negative and below Trend
+    if(dragonTrend.dragonSlope < -0.5 && !dragonTrend.dragonAboveTrend) {
+        return MARKET_REGIME_TRENDING_DOWN;
+    }
+    
+    // Accumulation if mostly sideways with volume at bottoms
+    if(MathAbs(dragonTrend.dragonSlope) < 0.2 && pvsra.volumeAtBottom) {
+        return MARKET_REGIME_ACCUMULATION;
+    }
+    
+    // Distribution if mostly sideways with volume at tops
+    if(MathAbs(dragonTrend.dragonSlope) < 0.2 && pvsra.volumeAtTop) {
+        return MARKET_REGIME_DISTRIBUTION;
+    }
+    
+    // Default to ranging
+    return MARKET_REGIME_RANGING;
+}
+
+// Calculate ATR in pips
+double CalculateATR(string symbol, ENUM_TIMEFRAMES timeframe, int period)
+{
+    double atr[];
+    int handle = iATR(symbol, timeframe, period);
+    
+    if(handle == INVALID_HANDLE) {
+        return 0;
+    }
+    
+    if(CopyBuffer(handle, 0, 0, 1, atr) <= 0) {
+        return 0;
+    }
+    
+    IndicatorRelease(handle);
+    
+    return atr[0] / _Point;
+}
+
+//+------------------------------------------------------------------+
+//| Risk Management Utilities                                        |
+//+------------------------------------------------------------------+
+
+// Calculate lot size based on risk percentage
+double CalculateLotSize(string symbol, double riskPercent, double entryPrice, double stopLoss)
+{
+    // Get account info
+    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+    double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+    double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+    double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+    double maxLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+    double lotStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+    
+    // Calculate risk amount
+    double riskAmount = balance * riskPercent / 100.0;
+    
+    // Calculate stop loss distance in pips
+    double slDistance = MathAbs(entryPrice - stopLoss) / _Point;
+    
+    // Calculate lot size
+    double lotSize = riskAmount / (slDistance * tickValue / tickSize);
+    
+    // Normalize to lot step
+    lotSize = MathFloor(lotSize / lotStep) * lotStep;
+    
+    // Ensure lot size is within limits
+    lotSize = MathMax(minLot, MathMin(maxLot, lotSize));
+    
+    return lotSize;
+}
+
+// Calculate drawdown percentage
+double CalculateDrawdown()
+{
+    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+    
+    // Get max equity (we need to track this ourselves since MQL5 doesn't have ACCOUNT_EQUITY_LIMIT)
+    static double maxEquity = equity;
+    
+    if(equity > maxEquity) maxEquity = equity;
+    
+    if(maxEquity <= 0) maxEquity = balance;
+    
+    return 100.0 * (maxEquity - equity) / maxEquity;
+}
+
+// Calculate daily drawdown percentage
+double CalculateDailyDrawdown(double dailyStartEquity)
+{
+    double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+    
+    if(dailyStartEquity <= 0) return 0;
+    
+    return 100.0 * (dailyStartEquity - currentEquity) / dailyStartEquity;
+}
+
+//+------------------------------------------------------------------+
+//| Time & Session Utilities                                         |
+//+------------------------------------------------------------------+
+
+// Check if current time is within trading session
+bool IsWithinSession(ENUM_TRADING_SESSION session)
+{
+    MqlDateTime dt;
+    TimeToStruct(TimeTradeServer(), dt);
+    
+    int hour = dt.hour;
+    int minute = dt.min;
+    int dayOfWeek = dt.day_of_week;
+    
+    // Check session ranges (approximated time zones)
+    switch(session) {
+        case SESSION_ASIAN:
+            return (hour >= 0 && hour < 8);
+            
+        case SESSION_LONDON:
+            return (hour >= 8 && hour < 16);
+            
+        case SESSION_NEWYORK:
+            return (hour >= 13 && hour < 21);
+            
+        case SESSION_OVERLAP:
+            return (hour >= 13 && hour < 16);
+            
+        case SESSION_NONE:
+            return (hour >= 21 || hour < 0);
+    }
+    
+    return false;
+}
+
+// Get current active trading session
+ENUM_TRADING_SESSION GetCurrentSession()
+{
+    if(IsWithinSession(SESSION_OVERLAP))
+        return SESSION_OVERLAP;
+    else if(IsWithinSession(SESSION_LONDON))
+        return SESSION_LONDON;
+    else if(IsWithinSession(SESSION_NEWYORK))
+        return SESSION_NEWYORK;
+    else if(IsWithinSession(SESSION_ASIAN))
+        return SESSION_ASIAN;
+    else
+        return SESSION_NONE;
+}
+
+// Check if market is open
+bool IsMarketOpen()
+{
+    MqlDateTime dt;
+    TimeToStruct(TimeTradeServer(), dt);
+    
+    // Check trading hours - this is simplified, in real implementation 
+    // you would check actual broker trading hours
+    int dayOfWeek = dt.day_of_week;
+    
+    // Most forex markets closed on weekends
+    if(dayOfWeek == 0 || dayOfWeek == 6)
+        return false;
+    
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Logging & Utility Functions                                      |
+//+------------------------------------------------------------------+
+
+// Write log message to file
+void WriteLog(string filename, string message)
+{
+    int fileHandle = FileOpen(filename, FILE_WRITE|FILE_READ|FILE_TXT);
+    
+    if(fileHandle != INVALID_HANDLE) {
+        FileSeek(fileHandle, 0, SEEK_END);
+        FileWrite(fileHandle, TimeToString(TimeCurrent()) + ": " + message);
+        FileClose(fileHandle);
+    }
+}
+
+// Format price with proper precision
+string FormatPrice(double price, string symbol = NULL)
+{
+    if(symbol == NULL) symbol = _Symbol;
+    
+    int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+    return DoubleToString(price, digits);
+}
+
+// Format volume (lot size)
+string FormatVolume(double volume)
+{
+    if(volume >= 1.0)
+        return DoubleToString(volume, 2);
+    else
+        return DoubleToString(volume, 3);
+}
+
+// Create unique object name
+string CreateObjectName(string prefix, string suffix = "")
+{
+    static int counter = 0;
+    counter++;
+    
+    return prefix + "_" + IntegerToString(counter) + "_" + suffix;
+}
+
+// Draw arrow on chart
+void DrawArrow(string name, datetime time, double price, int code, color clr, int width = 1)
+{
+    ObjectCreate(0, name, OBJ_ARROW, 0, time, price);
+    ObjectSetInteger(0, name, OBJPROP_ARROWCODE, code);
+    ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+    ObjectSetInteger(0, name, OBJPROP_WIDTH, width);
+    ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+    ObjectSetInteger(0, name, OBJPROP_BACK, false);
+}
+
+// Draw text on chart
+void DrawText(string name, string text, datetime time, double price, color clr, int size = 10)
+{
+    ObjectCreate(0, name, OBJ_TEXT, 0, time, price);
+    ObjectSetString(0, name, OBJPROP_TEXT, text);
+    ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+    ObjectSetInteger(0, name, OBJPROP_FONTSIZE, size);
+    ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+}
+
+// Draw horizontal line
+void DrawHLine(string name, double price, color clr, ENUM_LINE_STYLE style = STYLE_SOLID, int width = 1)
+{
+    ObjectCreate(0, name, OBJ_HLINE, 0, 0, price);
+    ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+    ObjectSetInteger(0, name, OBJPROP_STYLE, style);
+    ObjectSetInteger(0, name, OBJPROP_WIDTH, width);
+    ObjectSetInteger(0, name, OBJPROP_BACK, true);
+    ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+}
+
+//+------------------------------------------------------------------+
+//| Library initialization function                                  |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+    // Nothing to initialize for a library
+    return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Library deinitialization function                                |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+    // Nothing to clean up
+}
