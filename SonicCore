@@ -1,0 +1,1031 @@
+//+------------------------------------------------------------------+
+//|                                                    SonicCore.mqh |
+//|                                SonicR PropFirm EA - Core Analysis |
+//+------------------------------------------------------------------+
+#property copyright "SonicR PropFirm EA"
+#property link      "https://sonicr.com"
+
+#ifndef SONIC_CORE_MQH
+#define SONIC_CORE_MQH
+
+// SR level types
+enum ENUM_SR_TYPE
+{
+    SR_WHOLE = 0,             // Whole number (1.2000)
+    SR_HALF = 1,              // Half number (1.2050)
+    SR_QUARTER = 2,           // Quarter number (1.2025/1.2075)
+    SR_SWING_HIGH = 3,        // Previous swing high
+    SR_SWING_LOW = 4          // Previous swing low
+};
+
+// Support/Resistance level structure - sử dụng struct đơn giản, không kế thừa
+struct SRLevel
+{
+    double          price;     // Level price
+    ENUM_SR_TYPE    type;      // Level type
+    double          strength;  // Level strength (0-100)
+    datetime        lastTest;  // Last time level was tested
+    int             testCount; // Number of times level has been tested
+};
+
+// Dragon-Trend analysis structure
+struct SDragonTrendState
+{
+    bool dragonAboveTrend;     // Dragon > Trend
+    double dragonSlopeRatio;   // Slope ratio of Dragon (positive = upward)
+    double trendSlopeRatio;    // Slope ratio of Trend (positive = upward)
+    double dragonWidth;        // Width of Dragon channel (High-Low)
+    double pricePositionRatio; // Position of price within Dragon (0-1)
+    double diagonalStrength;   // Strength of Dragon-Trend diagonal pattern
+};
+
+// PVSRA analysis structure
+struct SPVSRAState
+{
+    bool climaxVolume;         // Climax volume detected
+    bool risingVolume;         // Rising volume detected
+    bool volumeAtTop;          // High volume at price tops
+    bool volumeAtBottom;       // High volume at price bottoms
+    bool bullishPVSRA;         // PVSRA indicates bullish MM
+    bool bearishPVSRA;         // PVSRA indicates bearish MM
+    double confidence;         // Confidence level of PVSRA signal (0-100)
+    int mmIntention;           // MM intention (1=bullish, -1=bearish, 0=unclear)
+};
+
+// Wave pattern structure
+struct SWavePattern
+{
+    double swingHighs[];      // Recent swing highs
+    double swingLows[];       // Recent swing lows
+    bool inUptrendWave;        // In uptrend wave
+    bool inDowntrendWave;      // In downtrend wave
+    bool inPullback;           // In pullback
+    double pullbackDepth;      // Depth of current pullback (%)
+    double waveAmplitude;      // Amplitude of current wave (pips)
+};
+
+// Class for core SonicR system analysis
+class CSonicCore
+{
+private:
+    // Indicator handles
+    int m_handleDragonMid;     // Dragon Mid (EMA34 Close)
+    int m_handleDragonHigh;    // Dragon High (EMA34 High)
+    int m_handleDragonLow;     // Dragon Low (EMA34 Low)
+    int m_handleTrend;         // Trend (EMA89 Close)
+    
+    // Buffers
+    double m_dragonMid[];      // Dragon Mid values
+    double m_dragonHigh[];     // Dragon High values
+    double m_dragonLow[];      // Dragon Low values
+    double m_trend[];          // Trend values
+    double m_close[];          // Close prices
+    double m_high[];           // High prices
+    double m_low[];            // Low prices
+    double m_volume[];         // Volume values
+    double m_open[];           // Open prices
+    
+    // Analysis results
+    SDragonTrendState m_dragonTrendState;
+    SPVSRAState m_pvsraState;
+    SWavePattern m_wavePattern;
+    
+    // SR Levels - sử dụng mảng thay vì CArrayObj
+    SRLevel m_srLevels[];   // Mảng động của SR levels 
+    int m_srLevelCount;        // Số lượng SR levels hiện tại
+    
+    // Configuration
+    int m_volumePeriod;        // Period for volume averaging
+    double m_climaxThreshold;  // Threshold for climax volume
+    double m_risingThreshold;  // Threshold for rising volume
+    double m_minSwingSize;     // Minimum swing size (pips)
+    
+    // Market structure flags
+    bool m_inAccumulation;     // Currently in accumulation phase?
+    bool m_inDistribution;     // Currently in distribution phase?
+    bool m_inMarkup;           // Currently in markup phase?
+    bool m_inMarkdown;         // Currently in markdown phase?
+    
+    // Last update time
+    datetime m_lastUpdateTime;
+    
+    // Helper methods
+    void InitializeIndicators();
+    void UpdateBuffers();
+    void AnalyzeDragonTrend();
+    void AnalyzePVSRA();
+    void AnalyzeWavePattern();
+    void UpdateSRLevels();
+    void DetectSwingPoints();
+    void AnalyzeMarketPhase();
+    double CalculateSRLevelStrength(double price, ENUM_SR_TYPE type);
+    double GetDistanceToPricePips(double price);
+    
+    // Check relative high/low methods
+    bool IsRelativeHigh(int index, int lookback);
+    bool IsRelativeLow(int index, int lookback);
+    
+public:
+    // Constructor/Destructor
+    CSonicCore(int volumePeriod = 10, double climaxThreshold = 2.0, double risingThreshold = 1.5);
+    ~CSonicCore();
+    
+    // Initialization and update
+    bool Initialize();
+    void Update();
+    bool AreHandlesValid();
+    
+    // Core signal detection
+    int DetectClassicSetup();
+    int DetectScoutSetup();
+    bool IsPVSRAConfirming(int direction) const;
+    bool IsPullbackValid(int direction) const;
+    
+    // Market phase detection
+    bool IsMarketInAccumulation() const { return m_inAccumulation; }
+    bool IsMarketInDistribution() const { return m_inDistribution; }
+    bool IsMarketInMarkup() const { return m_inMarkup; }
+    bool IsMarketInMarkdown() const { return m_inMarkdown; }
+    
+    // Dragon-Trend analysis
+    bool IsDragonAboveTrend() const { return m_dragonTrendState.dragonAboveTrend; }
+    double GetDragonSlope() const { return m_dragonTrendState.dragonSlopeRatio; }
+    double GetTrendSlope() const { return m_dragonTrendState.trendSlopeRatio; }
+    double GetDragonWidth() const { return m_dragonTrendState.dragonWidth; }
+    double GetPricePosition() const { return m_dragonTrendState.pricePositionRatio; }
+    
+    // PVSRA analysis
+    bool IsBullishPVSRA() const { return m_pvsraState.bullishPVSRA; }
+    bool IsBearishPVSRA() const { return m_pvsraState.bearishPVSRA; }
+    int GetMMIntention() const { return m_pvsraState.mmIntention; }
+    double GetPVSRAConfidence() const { return m_pvsraState.confidence; }
+    
+    // Wave pattern analysis
+    bool IsInPullback() const { return m_wavePattern.inPullback; }
+    double GetWaveAmplitude() const { return m_wavePattern.waveAmplitude; }
+    double GetPullbackDepth() const { return m_wavePattern.pullbackDepth; }
+    
+    // Support/Resistance
+    double FindNearestSRLevel(double price, double &strength, ENUM_SR_TYPE &type) const;
+    double FindNearestWholeNumber(double price) const;
+    
+    // Buffers access
+    double GetDragonMid(int shift = 0) const;
+    double GetDragonHigh(int shift = 0) const;
+    double GetDragonLow(int shift = 0) const;
+    double GetTrend(int shift = 0) const;
+    
+    // Status reporting
+    string GetStatusText() const;
+};
+
+//+------------------------------------------------------------------+
+//| Constructor                                                      |
+//+------------------------------------------------------------------+
+CSonicCore::CSonicCore(int volumePeriod = 10, double climaxThreshold = 2.0, double risingThreshold = 1.5)
+{
+    // Initialize parameters
+    m_volumePeriod = volumePeriod;
+    m_climaxThreshold = climaxThreshold;
+    m_risingThreshold = risingThreshold;
+    m_minSwingSize = 15.0; // 15 pips
+    
+    // Initialize handles
+    m_handleDragonMid = INVALID_HANDLE;
+    m_handleDragonHigh = INVALID_HANDLE;
+    m_handleDragonLow = INVALID_HANDLE;
+    m_handleTrend = INVALID_HANDLE;
+    
+    // Resize arrays before using ArraySetAsSeries
+    ArrayResize(m_dragonMid, 100);
+    ArrayResize(m_dragonHigh, 100);
+    ArrayResize(m_dragonLow, 100);
+    ArrayResize(m_trend, 100);
+    ArrayResize(m_close, 100);
+    ArrayResize(m_high, 100);
+    ArrayResize(m_low, 100);
+    ArrayResize(m_volume, 100);
+    ArrayResize(m_open, 100);
+    ArrayResize(m_srLevels, 100);
+    
+    // Initialize wave pattern arrays
+    ArrayResize(m_wavePattern.swingHighs, 5);
+    ArrayResize(m_wavePattern.swingLows, 5);
+    
+    // Initialize arrays
+    ArraySetAsSeries(m_dragonMid, true);
+    ArraySetAsSeries(m_dragonHigh, true);
+    ArraySetAsSeries(m_dragonLow, true);
+    ArraySetAsSeries(m_trend, true);
+    ArraySetAsSeries(m_close, true);
+    ArraySetAsSeries(m_high, true);
+    ArraySetAsSeries(m_low, true);
+    ArraySetAsSeries(m_volume, true);
+    ArraySetAsSeries(m_open, true);
+    
+    // Set swingHighs and swingLows as series if needed
+    ArraySetAsSeries(m_wavePattern.swingHighs, true);
+    ArraySetAsSeries(m_wavePattern.swingLows, true);
+    
+    // Initialize market structure flags
+    m_inAccumulation = false;
+    m_inDistribution = false;
+    m_inMarkup = false;
+    m_inMarkdown = false;
+    
+    // Initialize SR levels
+    m_srLevelCount = 0;
+    
+    // Initialize indicator handles
+    InitializeIndicators();
+}
+
+//+------------------------------------------------------------------+
+//| Destructor                                                       |
+//+------------------------------------------------------------------+
+CSonicCore::~CSonicCore()
+{
+    // Release indicator handles
+    if(m_handleDragonMid != INVALID_HANDLE) IndicatorRelease(m_handleDragonMid);
+    if(m_handleDragonHigh != INVALID_HANDLE) IndicatorRelease(m_handleDragonHigh);
+    if(m_handleDragonLow != INVALID_HANDLE) IndicatorRelease(m_handleDragonLow);
+    if(m_handleTrend != INVALID_HANDLE) IndicatorRelease(m_handleTrend);
+}
+
+//+------------------------------------------------------------------+
+//| Initialize indicator handles                                     |
+//+------------------------------------------------------------------+
+void CSonicCore::InitializeIndicators()
+{
+    // Create indicator handles
+    m_handleDragonMid = iMA(_Symbol, PERIOD_CURRENT, 34, 0, MODE_EMA, PRICE_CLOSE);
+    m_handleDragonHigh = iMA(_Symbol, PERIOD_CURRENT, 34, 0, MODE_EMA, PRICE_HIGH);
+    m_handleDragonLow = iMA(_Symbol, PERIOD_CURRENT, 34, 0, MODE_EMA, PRICE_LOW);
+    m_handleTrend = iMA(_Symbol, PERIOD_CURRENT, 89, 0, MODE_EMA, PRICE_CLOSE);
+}
+
+//+------------------------------------------------------------------+
+//| Initialize the core component                                    |
+//+------------------------------------------------------------------+
+bool CSonicCore::Initialize()
+{
+    // Check if indicator handles are valid
+    if(!AreHandlesValid()) {
+        return false;
+    }
+    
+    // Reset SR levels
+    m_srLevelCount = 0;
+    
+    // Update buffers and perform initial analysis
+    UpdateBuffers();
+    AnalyzeDragonTrend();
+    AnalyzePVSRA();
+    AnalyzeWavePattern();
+    UpdateSRLevels();
+    AnalyzeMarketPhase();
+    
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Check if all indicator handles are valid                         |
+//+------------------------------------------------------------------+
+bool CSonicCore::AreHandlesValid()
+{
+    return m_handleDragonMid != INVALID_HANDLE && 
+           m_handleDragonHigh != INVALID_HANDLE && 
+           m_handleDragonLow != INVALID_HANDLE && 
+           m_handleTrend != INVALID_HANDLE;
+}
+
+//+------------------------------------------------------------------+
+//| Update all buffers                                               |
+//+------------------------------------------------------------------+
+void CSonicCore::UpdateBuffers()
+{
+    // Copy indicator data to buffers
+    CopyBuffer(m_handleDragonMid, 0, 0, 100, m_dragonMid);
+    CopyBuffer(m_handleDragonHigh, 0, 0, 100, m_dragonHigh);
+    CopyBuffer(m_handleDragonLow, 0, 0, 100, m_dragonLow);
+    CopyBuffer(m_handleTrend, 0, 0, 100, m_trend);
+    
+    // Copy price data
+    CopyClose(_Symbol, PERIOD_CURRENT, 0, 100, m_close);
+    CopyHigh(_Symbol, PERIOD_CURRENT, 0, 100, m_high);
+    CopyLow(_Symbol, PERIOD_CURRENT, 0, 100, m_low);
+    CopyOpen(_Symbol, PERIOD_CURRENT, 0, 100, m_open);
+    
+    // Copy volume data - sửa kiểu mảng và cách gọi
+    long temp_volume[];
+    ArrayResize(temp_volume, 100);
+    ArraySetAsSeries(temp_volume, true);
+    CopyTickVolume(_Symbol, PERIOD_CURRENT, 0, 100, temp_volume);
+    
+    // Chuyển từ long sang double
+    for(int i = 0; i < ArraySize(temp_volume) && i < ArraySize(m_volume); i++)
+    {
+        m_volume[i] = (double)temp_volume[i];
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Update all analysis                                              |
+//+------------------------------------------------------------------+
+void CSonicCore::Update()
+{
+    // Update buffers
+    UpdateBuffers();
+    
+    // Perform analysis
+    AnalyzeDragonTrend();
+    AnalyzePVSRA();
+    AnalyzeWavePattern();
+    UpdateSRLevels();
+    AnalyzeMarketPhase();
+    
+    // Update last update time
+    m_lastUpdateTime = TimeCurrent();
+}
+
+//+------------------------------------------------------------------+
+//| Analyze Dragon-Trend relationship                                |
+//+------------------------------------------------------------------+
+void CSonicCore::AnalyzeDragonTrend()
+{
+    // Check if Dragon is above Trend
+    m_dragonTrendState.dragonAboveTrend = m_dragonMid[0] > m_trend[0];
+    
+    // Calculate Dragon slope
+    double dragonSlope = 0;
+    for(int i = 0; i < 9; i++) {
+        dragonSlope += (m_dragonMid[i] - m_dragonMid[i+1]);
+    }
+    
+    // Avoid division by zero
+    if(MathAbs(m_dragonMid[0]) > 0.00001) {
+        m_dragonTrendState.dragonSlopeRatio = dragonSlope / 10.0 * 100.0 / m_dragonMid[0];
+    } else {
+        m_dragonTrendState.dragonSlopeRatio = 0;
+    }
+    
+    // Calculate Trend slope
+    double trendSlope = 0;
+    for(int i = 0; i < 9; i++) {
+        trendSlope += (m_trend[i] - m_trend[i+1]);
+    }
+    
+    // Avoid division by zero
+    if(MathAbs(m_trend[0]) > 0.00001) {
+        m_dragonTrendState.trendSlopeRatio = trendSlope / 10.0 * 100.0 / m_trend[0];
+    } else {
+        m_dragonTrendState.trendSlopeRatio = 0;
+    }
+    
+    // Calculate Dragon width
+    m_dragonTrendState.dragonWidth = 0;
+    for(int i = 0; i < 10; i++) {
+        m_dragonTrendState.dragonWidth += (m_dragonHigh[i] - m_dragonLow[i]);
+    }
+    m_dragonTrendState.dragonWidth /= 10.0;
+    
+    // Calculate price position within Dragon
+    double dragonRange = m_dragonHigh[0] - m_dragonLow[0];
+    if(dragonRange > 0.00001) {
+        m_dragonTrendState.pricePositionRatio = (m_close[0] - m_dragonLow[0]) / dragonRange;
+    } else {
+        m_dragonTrendState.pricePositionRatio = 0.5;
+    }
+    
+    // Calculate diagonal strength - measures how parallel Dragon and Trend are
+    double angleDifference = MathAbs(m_dragonTrendState.dragonSlopeRatio - m_dragonTrendState.trendSlopeRatio);
+    m_dragonTrendState.diagonalStrength = 100.0 - MathMin(angleDifference * 10.0, 100.0);
+}
+
+//+------------------------------------------------------------------+
+//| Analyze PVSRA (Price Volume Support Resistance Analysis)         |
+//+------------------------------------------------------------------+
+void CSonicCore::AnalyzePVSRA()
+{
+    // Reset PVSRA state
+    m_pvsraState.climaxVolume = false;
+    m_pvsraState.risingVolume = false;
+    m_pvsraState.volumeAtTop = false;
+    m_pvsraState.volumeAtBottom = false;
+    m_pvsraState.bullishPVSRA = false;
+    m_pvsraState.bearishPVSRA = false;
+    m_pvsraState.confidence = 0;
+    m_pvsraState.mmIntention = 0;
+    
+    // Calculate average volume
+    double avgVolume = 0;
+    int validBars = 0;
+    
+    for(int i = 1; i <= m_volumePeriod && i < ArraySize(m_volume); i++) {
+        avgVolume += m_volume[i];
+        validBars++;
+    }
+    
+    if(validBars > 0) {
+        avgVolume /= validBars;
+    } else {
+        return; // Not enough data
+    }
+    
+    // Check for climax volume
+    if(m_volume[0] >= avgVolume * m_climaxThreshold) {
+        m_pvsraState.climaxVolume = true;
+    }
+    
+    // Check for rising volume
+    if(m_volume[0] >= avgVolume * m_risingThreshold) {
+        m_pvsraState.risingVolume = true;
+    }
+    
+    // Analyze where volume is occurring
+    int volumeAtTopCount = 0;
+    int volumeAtBottomCount = 0;
+    int totalHighVolumeCandles = 0;
+    
+    // Loop through recent candles to find volume patterns
+    for(int i = 0; i < 15 && i < ArraySize(m_volume); i++) {
+        // Only consider high volume candles
+        if(m_volume[i] >= avgVolume * 1.3) {
+            totalHighVolumeCandles++;
+            
+            // Is this a bearish candle (close < open)?
+            bool isBearish = m_close[i] < m_open[i];
+            
+            // Check if high volume is at tops or bottoms
+            if(isBearish && IsRelativeHigh(i, 5)) {
+                volumeAtTopCount++;
+            }
+            
+            if(!isBearish && IsRelativeLow(i, 5)) {
+                volumeAtBottomCount++;
+            }
+        }
+    }
+    
+    // Set volume location flags based on counts
+    if(totalHighVolumeCandles > 0) {
+        if(volumeAtTopCount > totalHighVolumeCandles * 0.3) {
+            m_pvsraState.volumeAtTop = true;
+        }
+        
+        if(volumeAtBottomCount > totalHighVolumeCandles * 0.3) {
+            m_pvsraState.volumeAtBottom = true;
+        }
+    }
+    
+    // Determine MM intention based on PVSRA
+    // Get nearest SR level
+    double closestSRPrice = 0;
+    double srStrength = 0;
+    ENUM_SR_TYPE srType = SR_WHOLE;
+    
+    closestSRPrice = FindNearestSRLevel(m_close[0], srStrength, srType);
+    
+    bool priceAboveSR = m_close[0] > closestSRPrice;
+    bool volumeAboveSR = false;
+    bool volumeBelowSR = false;
+    
+    // Determine if volume is occurring above or below SR
+    for(int i = 0; i < 5 && i < ArraySize(m_volume); i++) {
+        if(m_volume[i] >= avgVolume * 1.3) {
+            if(m_close[i] > closestSRPrice) {
+                volumeAboveSR = true;
+            } else {
+                volumeBelowSR = true;
+            }
+        }
+    }
+    
+    // Determine MM intention:
+    // - Bulls like to drive price BELOW SR and increase trading (create demand)
+    // - Bears like to drive price ABOVE SR and increase trading (create supply)
+    
+    // Evidence of bullish MM
+    if((m_pvsraState.volumeAtBottom || volumeBelowSR) && 
+       (srType == SR_WHOLE || srType == SR_HALF) && 
+       !priceAboveSR) {
+        m_pvsraState.bullishPVSRA = true;
+        m_pvsraState.mmIntention = 1;
+        m_pvsraState.confidence = 70;
+        
+        // Increase confidence if multiple factors aligned
+        if(m_pvsraState.volumeAtBottom && volumeBelowSR) m_pvsraState.confidence += 10;
+        if(m_pvsraState.climaxVolume) m_pvsraState.confidence += 10;
+        if(srType == SR_WHOLE) m_pvsraState.confidence += 10;
+    }
+    
+    // Evidence of bearish MM
+    if((m_pvsraState.volumeAtTop || volumeAboveSR) && 
+       (srType == SR_WHOLE || srType == SR_HALF) && 
+       priceAboveSR) {
+        m_pvsraState.bearishPVSRA = true;
+        m_pvsraState.mmIntention = -1;
+        m_pvsraState.confidence = 70;
+        
+        // Increase confidence if multiple factors aligned
+        if(m_pvsraState.volumeAtTop && volumeAboveSR) m_pvsraState.confidence += 10;
+        if(m_pvsraState.climaxVolume) m_pvsraState.confidence += 10;
+        if(srType == SR_WHOLE) m_pvsraState.confidence += 10;
+    }
+    
+    // Cap confidence at 100
+    m_pvsraState.confidence = MathMin(m_pvsraState.confidence, 100);
+}
+
+//+------------------------------------------------------------------+
+//| Check if candle at index is a relative high                      |
+//+------------------------------------------------------------------+
+bool CSonicCore::IsRelativeHigh(int index, int lookback)
+{
+    int size = ArraySize(m_high);
+    if(index >= size || index + lookback >= size) {
+        return false;
+    }
+    
+    double highPrice = m_high[index];
+    
+    // Check if this is higher than surrounding candles
+    for(int i = 1; i <= lookback; i++) {
+        // Check before
+        if(index - i >= 0 && index - i < size && m_high[index - i] > highPrice) {
+            return false;
+        }
+        
+        // Check after
+        if(index + i < size && m_high[index + i] > highPrice) {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Check if candle at index is a relative low                       |
+//+------------------------------------------------------------------+
+bool CSonicCore::IsRelativeLow(int index, int lookback)
+{
+    int size = ArraySize(m_low);
+    if(index >= size || index + lookback >= size) {
+        return false;
+    }
+    
+    double lowPrice = m_low[index];
+    
+    // Check if this is lower than surrounding candles
+    for(int i = 1; i <= lookback; i++) {
+        // Check before
+        if(index - i >= 0 && index - i < size && m_low[index - i] < lowPrice) {
+            return false;
+        }
+        
+        // Check after
+        if(index + i < size && m_low[index + i] < lowPrice) {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Analyze Wave Pattern                                             |
+//+------------------------------------------------------------------+
+void CSonicCore::AnalyzeWavePattern()
+{
+    // Reset wave pattern
+    m_wavePattern.inUptrendWave = false;
+    m_wavePattern.inDowntrendWave = false;
+    m_wavePattern.inPullback = false;
+    m_wavePattern.pullbackDepth = 0;
+    m_wavePattern.waveAmplitude = 0;
+    
+    // Detect swing points
+    DetectSwingPoints();
+    
+    // Determine if in an uptrend wave
+    if(m_wavePattern.swingLows[0] > m_wavePattern.swingLows[1] &&
+       m_wavePattern.swingHighs[0] > m_wavePattern.swingHighs[1]) {
+        m_wavePattern.inUptrendWave = true;
+    }
+    
+    // Determine if in a downtrend wave
+    if(m_wavePattern.swingLows[0] < m_wavePattern.swingLows[1] &&
+       m_wavePattern.swingHighs[0] < m_wavePattern.swingHighs[1]) {
+        m_wavePattern.inDowntrendWave = true;
+    }
+    
+    // Calculate wave amplitude
+    if(m_wavePattern.inUptrendWave) {
+        m_wavePattern.waveAmplitude = (m_wavePattern.swingHighs[0] - m_wavePattern.swingLows[1]) / _Point;
+    } else if(m_wavePattern.inDowntrendWave) {
+        m_wavePattern.waveAmplitude = (m_wavePattern.swingHighs[1] - m_wavePattern.swingLows[0]) / _Point;
+    }
+    
+    // Detect pullback and calculate depth
+    if(m_wavePattern.inUptrendWave) {
+        double highToLow = m_wavePattern.swingHighs[0] - m_close[0];
+        double range = m_wavePattern.swingHighs[0] - m_wavePattern.swingLows[1];
+        
+        if(highToLow > 0 && range > 0) {
+            m_wavePattern.pullbackDepth = highToLow / range * 100;
+            
+            // Consider it a pullback if depth is between 20-80%
+            if(m_wavePattern.pullbackDepth >= 20 && m_wavePattern.pullbackDepth <= 80) {
+                m_wavePattern.inPullback = true;
+            }
+        }
+    } else if(m_wavePattern.inDowntrendWave) {
+        double lowToHigh = m_close[0] - m_wavePattern.swingLows[0];
+        double range = m_wavePattern.swingHighs[1] - m_wavePattern.swingLows[0];
+        
+        if(lowToHigh > 0 && range > 0) {
+            m_wavePattern.pullbackDepth = lowToHigh / range * 100;
+            
+            // Consider it a pullback if depth is between 20-80%
+            if(m_wavePattern.pullbackDepth >= 20 && m_wavePattern.pullbackDepth <= 80) {
+                m_wavePattern.inPullback = true;
+            }
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Analyze Market Phase                                             |
+//+------------------------------------------------------------------+
+void CSonicCore::AnalyzeMarketPhase()
+{
+    // Reset market phase flags
+    m_inAccumulation = false;
+    m_inDistribution = false;
+    m_inMarkup = false;
+    m_inMarkdown = false;
+    
+    // Check for Accumulation - sideways price action with high volume on lows
+    bool sideways = MathAbs(m_dragonTrendState.dragonSlopeRatio) < 0.01 &&
+                   MathAbs(m_dragonTrendState.trendSlopeRatio) < 0.01;
+                   
+    if(sideways && m_pvsraState.volumeAtBottom && m_pvsraState.bullishPVSRA) {
+        m_inAccumulation = true;
+        return;
+    }
+    
+    // Check for Distribution - sideways price action with high volume on highs
+    if(sideways && m_pvsraState.volumeAtTop && m_pvsraState.bearishPVSRA) {
+        m_inDistribution = true;
+        return;
+    }
+    
+    // Check for Markup - upward price action with dragon above trend
+    if(m_dragonTrendState.dragonSlopeRatio > 0.01 &&
+       m_dragonTrendState.trendSlopeRatio > 0 &&
+       m_dragonTrendState.dragonAboveTrend) {
+        m_inMarkup = true;
+        return;
+    }
+    
+    // Check for Markdown - downward price action with dragon below trend
+    if(m_dragonTrendState.dragonSlopeRatio < -0.01 &&
+       m_dragonTrendState.trendSlopeRatio < 0 &&
+       !m_dragonTrendState.dragonAboveTrend) {
+        m_inMarkdown = true;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Detect swing points in price action                              |
+//+------------------------------------------------------------------+
+void CSonicCore::DetectSwingPoints()
+{
+    // Initialize arrays
+    ArrayInitialize(m_wavePattern.swingHighs, 0);
+    ArrayInitialize(m_wavePattern.swingLows, 0);
+    
+    // Find swing highs and lows
+    int highCount = 0;
+    int lowCount = 0;
+    
+    // Make sure we don't exceed array bounds or 5 swings
+    int maxBars = MathMin(ArraySize(m_high) - 5, 45);
+    
+    for(int i = 5; i < maxBars && (highCount < 5 || lowCount < 5); i++) {
+        // Check for swing high
+        if(highCount < 5 && IsRelativeHigh(i, 5)) {
+            m_wavePattern.swingHighs[highCount] = m_high[i];
+            highCount++;
+        }
+        
+        // Check for swing low
+        if(lowCount < 5 && IsRelativeLow(i, 5)) {
+            m_wavePattern.swingLows[lowCount] = m_low[i];
+            lowCount++;
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Update Support/Resistance levels                                 |
+//+------------------------------------------------------------------+
+void CSonicCore::UpdateSRLevels()
+{
+    // Reset SR levels
+    m_srLevelCount = 0;
+    
+    // Get the current price
+    double currentPrice = m_close[0];
+    
+    // Find the nearest whole numbers (200 pips range)
+    double wholeNumber = MathFloor(currentPrice / 1.0) * 1.0;
+    
+    // Add whole, half, and quarter numbers within range
+    for(int i = -2; i <= 2; i++) {
+        double baseWhole = wholeNumber + i * 1.0;
+        
+        // Make sure we don't exceed array bounds
+        if(m_srLevelCount >= ArraySize(m_srLevels)) break;
+        
+        // Add whole number
+        m_srLevels[m_srLevelCount].price = baseWhole;
+        m_srLevels[m_srLevelCount].type = SR_WHOLE;
+        m_srLevels[m_srLevelCount].strength = 90;
+        m_srLevels[m_srLevelCount].lastTest = 0;
+        m_srLevels[m_srLevelCount].testCount = 0;
+        m_srLevelCount++;
+        
+        // Add half number
+        if(m_srLevelCount >= ArraySize(m_srLevels)) break;
+        m_srLevels[m_srLevelCount].price = baseWhole + 0.5;
+        m_srLevels[m_srLevelCount].type = SR_HALF;
+        m_srLevels[m_srLevelCount].strength = 70;
+        m_srLevels[m_srLevelCount].lastTest = 0;
+        m_srLevels[m_srLevelCount].testCount = 0;
+        m_srLevelCount++;
+        
+        // Add quarter numbers
+        if(m_srLevelCount >= ArraySize(m_srLevels)) break;
+        m_srLevels[m_srLevelCount].price = baseWhole + 0.25;
+        m_srLevels[m_srLevelCount].type = SR_QUARTER;
+        m_srLevels[m_srLevelCount].strength = 50;
+        m_srLevels[m_srLevelCount].lastTest = 0;
+        m_srLevels[m_srLevelCount].testCount = 0;
+        m_srLevelCount++;
+        
+        if(m_srLevelCount >= ArraySize(m_srLevels)) break;
+        m_srLevels[m_srLevelCount].price = baseWhole + 0.75;
+        m_srLevels[m_srLevelCount].type = SR_QUARTER;
+        m_srLevels[m_srLevelCount].strength = 50;
+        m_srLevels[m_srLevelCount].lastTest = 0;
+        m_srLevels[m_srLevelCount].testCount = 0;
+        m_srLevelCount++;
+    }
+    
+    // Add swing highs and lows as S/R levels
+    for(int i = 0; i < 5; i++) {
+        if(m_srLevelCount >= ArraySize(m_srLevels)) break;
+        
+        if(m_wavePattern.swingHighs[i] > 0) {
+            m_srLevels[m_srLevelCount].price = m_wavePattern.swingHighs[i];
+            m_srLevels[m_srLevelCount].type = SR_SWING_HIGH;
+            m_srLevels[m_srLevelCount].strength = 80 - i * 10;
+            m_srLevels[m_srLevelCount].lastTest = 0;
+            m_srLevels[m_srLevelCount].testCount = 0;
+            m_srLevelCount++;
+        }
+        
+        if(m_srLevelCount >= ArraySize(m_srLevels)) break;
+        
+        if(m_wavePattern.swingLows[i] > 0) {
+            m_srLevels[m_srLevelCount].price = m_wavePattern.swingLows[i];
+            m_srLevels[m_srLevelCount].type = SR_SWING_LOW;
+            m_srLevels[m_srLevelCount].strength = 80 - i * 10;
+            m_srLevels[m_srLevelCount].lastTest = 0;
+            m_srLevels[m_srLevelCount].testCount = 0;
+            m_srLevelCount++;
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Find nearest S/R level to a price                                |
+//+------------------------------------------------------------------+
+double CSonicCore::FindNearestSRLevel(double price, double &strength, ENUM_SR_TYPE &type) const
+{
+    double nearestLevel = 0;
+    double minDistance = DBL_MAX;
+    
+    // Loop through all S/R levels
+    for(int i = 0; i < m_srLevelCount; i++) {
+        // Calculate distance
+        double distance = MathAbs(price - m_srLevels[i].price);
+        
+        // Check if this is the nearest level
+        if(distance < minDistance) {
+            minDistance = distance;
+            nearestLevel = m_srLevels[i].price;
+            strength = m_srLevels[i].strength;
+            type = m_srLevels[i].type;
+        }
+    }
+    
+    return nearestLevel;
+}
+
+//+------------------------------------------------------------------+
+//| Find nearest whole number to a price                             |
+//+------------------------------------------------------------------+
+double CSonicCore::FindNearestWholeNumber(double price) const
+{
+    return MathRound(price);
+}
+
+//+------------------------------------------------------------------+
+//| Detect Classic setup                                             |
+//+------------------------------------------------------------------+
+int CSonicCore::DetectClassicSetup()
+{
+    // Classic Long: "Buy the first pullback from new high"
+    if(m_dragonTrendState.dragonAboveTrend && 
+       m_dragonTrendState.dragonSlopeRatio > 0 && 
+       m_wavePattern.inUptrendWave && 
+       m_wavePattern.inPullback && 
+       IsPullbackValid(1)) {
+        return 1; // Buy signal
+    }
+    
+    // Classic Short: "Sell the first pullback from new low"
+    if(!m_dragonTrendState.dragonAboveTrend && 
+       m_dragonTrendState.dragonSlopeRatio < 0 && 
+       m_wavePattern.inDowntrendWave && 
+       m_wavePattern.inPullback && 
+       IsPullbackValid(-1)) {
+        return -1; // Sell signal
+    }
+    
+    return 0; // No signal
+}
+
+//+------------------------------------------------------------------+
+//| Detect Scout setup                                               |
+//+------------------------------------------------------------------+
+int CSonicCore::DetectScoutSetup()
+{
+    // Scout trades are based on PVSRA and should be in line with MM intention
+    
+    // Scout Long
+    if(m_pvsraState.bullishPVSRA && 
+       m_pvsraState.confidence >= 80 && 
+       m_wavePattern.pullbackDepth >= 40 && 
+       m_close[0] < m_trend[0]) {
+        return 1; // Buy signal
+    }
+    
+    // Scout Short
+    if(m_pvsraState.bearishPVSRA && 
+       m_pvsraState.confidence >= 80 && 
+       m_wavePattern.pullbackDepth >= 40 && 
+       m_close[0] > m_trend[0]) {
+        return -1; // Sell signal
+    }
+    
+    return 0; // No signal
+}
+
+//+------------------------------------------------------------------+
+//| Check if pullback is valid for Classic setup                     |
+//+------------------------------------------------------------------+
+bool CSonicCore::IsPullbackValid(int direction) const
+{
+    // Check if wave amplitude is sufficient
+    if(m_wavePattern.waveAmplitude < m_minSwingSize) {
+        return false;
+    }
+    
+    // Check if pullback depth is within optimal range (30-70%)
+    if(m_wavePattern.pullbackDepth < 30 || m_wavePattern.pullbackDepth > 70) {
+        return false;
+    }
+    
+    // For long setup
+    if(direction > 0) {
+        // Check if price is between Dragon Mid and Dragon Low
+        return m_close[0] < m_dragonMid[0] && m_close[0] > m_dragonLow[0];
+    }
+    // For short setup
+    else {
+        // Check if price is between Dragon Mid and Dragon High
+        return m_close[0] > m_dragonMid[0] && m_close[0] < m_dragonHigh[0];
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Check if PVSRA confirms the signal direction                     |
+//+------------------------------------------------------------------+
+bool CSonicCore::IsPVSRAConfirming(int direction) const
+{
+    // Check if PVSRA agrees with signal direction
+    if(direction > 0) {
+        return m_pvsraState.bullishPVSRA;
+    } else if(direction < 0) {
+        return m_pvsraState.bearishPVSRA;
+    }
+    
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Get indicator buffer value with safety check                     |
+//+------------------------------------------------------------------+
+double CSonicCore::GetDragonMid(int shift = 0) const
+{
+    if(shift < 0 || shift >= ArraySize(m_dragonMid)) {
+        return 0;
+    }
+    
+    return m_dragonMid[shift];
+}
+
+//+------------------------------------------------------------------+
+//| Get Dragon High with safety check                                |
+//+------------------------------------------------------------------+
+double CSonicCore::GetDragonHigh(int shift = 0) const
+{
+    if(shift < 0 || shift >= ArraySize(m_dragonHigh)) {
+        return 0;
+    }
+    
+    return m_dragonHigh[shift];
+}
+
+//+------------------------------------------------------------------+
+//| Get Dragon Low with safety check                                 |
+//+------------------------------------------------------------------+
+double CSonicCore::GetDragonLow(int shift = 0) const
+{
+    if(shift < 0 || shift >= ArraySize(m_dragonLow)) {
+        return 0;
+    }
+    
+    return m_dragonLow[shift];
+}
+
+//+------------------------------------------------------------------+
+//| Get Trend with safety check                                      |
+//+------------------------------------------------------------------+
+double CSonicCore::GetTrend(int shift = 0) const
+{
+    if(shift < 0 || shift >= ArraySize(m_trend)) {
+        return 0;
+    }
+    
+    return m_trend[shift];
+}
+
+//+------------------------------------------------------------------+
+//| Get distance to price in pips                                    |
+//+------------------------------------------------------------------+
+double CSonicCore::GetDistanceToPricePips(double price)
+{
+    return MathAbs(price - m_close[0]) / _Point;
+}
+
+//+------------------------------------------------------------------+
+//| Get status text for diagnostics                                  |
+//+------------------------------------------------------------------+
+string CSonicCore::GetStatusText() const
+{
+    string status = "SonicCore Status:\n";
+    
+    // Dragon-Trend
+    status += "Dragon-Trend: " + (m_dragonTrendState.dragonAboveTrend ? "Dragon Above Trend" : "Dragon Below Trend") + "\n";
+    status += "Dragon Slope: " + DoubleToString(m_dragonTrendState.dragonSlopeRatio, 4) + "\n";
+    status += "Trend Slope: " + DoubleToString(m_dragonTrendState.trendSlopeRatio, 4) + "\n";
+    
+    // PVSRA
+    status += "PVSRA: " + (m_pvsraState.bullishPVSRA ? "Bullish" : (m_pvsraState.bearishPVSRA ? "Bearish" : "Neutral")) + "\n";
+    status += "MM Intention: " + (m_pvsraState.mmIntention > 0 ? "Bullish" : (m_pvsraState.mmIntention < 0 ? "Bearish" : "Unclear")) + "\n";
+    status += "PVSRA Confidence: " + DoubleToString(m_pvsraState.confidence, 1) + "%\n";
+    
+    // Wave Pattern
+    status += "Wave: " + (m_wavePattern.inUptrendWave ? "Uptrend" : (m_wavePattern.inDowntrendWave ? "Downtrend" : "Sideways")) + "\n";
+    status += "In Pullback: " + (m_wavePattern.inPullback ? "Yes" : "No") + "\n";
+    if(m_wavePattern.inPullback) {
+        status += "Pullback Depth: " + DoubleToString(m_wavePattern.pullbackDepth, 1) + "%\n";
+    }
+    status += "Wave Amplitude: " + DoubleToString(m_wavePattern.waveAmplitude, 1) + " pips\n";
+    
+    // Market Phase
+    if(m_inAccumulation) status += "Market Phase: Accumulation\n";
+    else if(m_inDistribution) status += "Market Phase: Distribution\n";
+    else if(m_inMarkup) status += "Market Phase: Markup\n";
+    else if(m_inMarkdown) status += "Market Phase: Markdown\n";
+    else status += "Market Phase: Undefined\n";
+    
+    return status;
+}
+
+#endif // SONIC_CORE_MQH
